@@ -1,0 +1,126 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongo-account
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: mongo-role
+rules:
+- apiGroups: [""]
+  resources: ["deployments"]
+  verbs: ["list", "watch"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["*"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get","list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: mongo_role_binding
+  namespace: dbcluster
+subjects:
+- kind: ServiceAccount
+  name: mongo-account
+  namespace: dbcluster
+roleRef:
+  kind: ClusterRole
+  name: mongo-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mongo-db
+  namespace: dbcluster
+spec:
+  serviceName: mongodb
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mongo-db
+#  strategy:
+#    type: RollingUpdate
+  podManagementPolicy: Parallel
+  template:
+    metadata:
+      labels:
+        app: mongo-db
+    spec:
+      terminationGracePeriodSeconds: 30
+      serviceAccountName: mongo-account
+      containers:
+        - env:
+            - name: MONGO_INITDB_DATABASE
+              value: eves
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              value: admin
+            - name: MONGO_INITDB_ROOT_USERNAME
+              value: admin
+          name: mongo-db
+          image: soorajkumary/mongotest:v1
+          command: ["/bin/sh"]
+          args: ["-c", "mongod --replSet=rs0 --bind_ip_all --dbpath=/data/db"]
+          ports:
+            - containerPort: 27017
+          volumeMounts:
+            - mountPath: /data/db
+              name: mongo-persistent-storage
+      restartPolicy: Always
+  volumeClaimTemplates:
+    - metadata:
+        name: mongo-persistent-storage
+      spec:
+        storageClassName: "managed-csi"
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb
+  namespace: dbcluster
+spec:
+  type: LoadBalancer
+  ports:
+    - name: "mongodb"
+      port: 27017
+      targetPort: 27017
+  selector:
+    app: mongo-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-primary
+  namespace: dbcluster
+spec:
+  type: LoadBalancer
+  ports:
+    - name: "mongodb"
+      port: 27017
+      targetPort: 27017
+  selector:
+    app: mongo-db
+    role: primary
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mongodb-secondary
+  namespace: dbcluster
+spec:
+  type: LoadBalancer
+  ports:
+    - name: "mongodb"
+      port: 27017
+      targetPort: 27017
+  selector:
+    app: mongo-db
+    role: secondary
